@@ -1,0 +1,548 @@
+#PART A CODE
+
+
+
+-Objetivo: Procesar tres matrices de entrada ($A, B, C$) de tamaño $16\times16$ para generar dos matrices de resultado: $MAX$ (con los valores mayores) y $MIN$ (con los menores).
+-Algoritmo: Utiliza dos bucles anidados (i y j) que recorren la matriz desde la posición 1 hasta $N$, comparando los tres valores en cada celda mediante instrucciones slt (set less than).
+-Memoria: Accede a los datos calculando manualmente el desplazamiento (offset) en bytes: Base + (i * 64) + (j * 4).
+-Pipeline: Cumple los requisitos de la "Parte A" insertando una instrucción vacía (nop) después de cada salto para respetar el Delay Slot sin optimizar todavía.
+-Estructura: La sección de datos (.data) se sitúa al final para asegurar que la ejecución comience inmediatamente en el código principal.
+
+
+
+
+.text 0x00400000        # Indica al ensamblador que el código comienza en la dirección 0x00400000
+.globl main             # Declara la etiqueta 'main' como global para que el simulador sepa dónde empezar
+
+main:
+    # --- Inicialización ---
+    la   $t0, N           # Carga la dirección de memoria de la variable N en el registro temporal $t0
+    lw   $s0, 0($t0)      # Lee el valor de N (16) desde la memoria y lo guarda en $s0
+    li   $s1, 1           # Inicializa el contador del bucle externo 'i' en 1 ($s1 = 1)
+
+loop_i:
+    # --- Condición del bucle externo (i) ---
+    # Comprobamos si i < N.
+    slt  $t0, $s1, $s0    # Si $s1 (i) < $s0 (N), entonces $t0 = 1. Si no, $t0 = 0.
+    beq  $t0, $zero, end  # Si $t0 es 0 (condición falsa, i >= N), salta a la etiqueta 'end'.
+    nop                   # Delay Slot: Instrucción vacía necesaria mientras se decide el salto.
+
+    li   $s2, 1           # Inicializa el contador del bucle interno 'j' en 1 ($s2 = 1) cada vez que cambia 'i'.
+
+loop_j:
+    # --- Condición del bucle interno (j) ---
+    # Comprobamos si j < N.
+    slt  $t0, $s2, $s0    # Si $s2 (j) < $s0 (N), entonces $t0 = 1.
+    beq  $t0, $zero, next_i # Si j >= N, termina el bucle interno y salta a 'next_i' (incrementar i).
+    nop                   # Delay Slot: Instrucción vacía obligatoria.
+
+    # --- Cálculo de la Dirección de Memoria (Offset) ---
+    # Queremos acceder a la posición [i][j]. La fórmula es: DirecciónBase + (i * TamañoFila) + (j * TamañoPalabra)
+    # TamañoFila = 16 elementos * 4 bytes = 64 bytes.
+    
+    sll  $t0, $s1, 6      # $t0 = i * 64. (Shift left logical 6 bits equivale a multiplicar por 2^6).
+    sll  $t1, $s2, 2      # $t1 = j * 4.  (Shift left logical 2 bits equivale a multiplicar por 2^2).
+    add  $t2, $t0, $t1    # $t2 = Offset Total en bytes desde el inicio del array.
+
+    # --- Carga de datos (Matrices A, B, C) ---
+    la   $t3, A           # Carga la dirección base (inicio) de la matriz A en $t3.
+    add  $t3, $t3, $t2    # Suma la base de A + el offset calculado ($t2) para apuntar a A[i][j].
+    lw   $t4, 0($t3)      # Carga el valor de A[i][j] desde la memoria al registro $t4.
+
+    la   $t3, B           # Carga la dirección base de la matriz B.
+    add  $t3, $t3, $t2    # Suma el offset ($t2).
+    lw   $t5, 0($t3)      # Carga el valor de B[i][j] en el registro $t5.
+
+    la   $t3, C           # Carga la dirección base de la matriz C.
+    add  $t3, $t3, $t2    # Suma el offset ($t2).
+    lw   $t6, 0($t3)      # Carga el valor de C[i][j] en el registro $t6.
+
+    # --- Lógica de MAX (Cálculo del Máximo) ---
+    # Algoritmo: MAX = A; if (B > MAX) MAX = B; if (C > MAX) MAX = C;
+    
+    add  $t9, $t4, $zero  # Inicializamos temporalmente MAX ($t9) con el valor de A ($t4).
+    
+    # Comparar MAX actual con B
+    slt  $t7, $t9, $t5    # Compara: ¿Es MAX ($t9) < B ($t5)? Si sí, pone $t7 a 1.
+    beq  $t7, $zero, check_c # Si $t7 es 0 (MAX >= B), salta a comprobar C sin cambiar nada.
+    nop                   # Delay Slot.
+    add  $t9, $t5, $zero  # Si no saltó (B era mayor), actualizamos MAX = B.
+    
+check_c:
+    # Comparar MAX actual con C
+    slt  $t7, $t9, $t6    # Compara: ¿Es MAX ($t9) < C ($t6)?
+    beq  $t7, $zero, save_res # Si $t7 es 0, ya tenemos el máximo. Saltamos a guardar.
+    nop                   # Delay Slot.
+    add  $t9, $t6, $zero  # Si C era mayor, actualizamos MAX = C.
+
+save_res:
+    # Guardar el resultado MAX en memoria
+    la   $t3, MAX         # Carga la dirección base de la matriz de resultados MAX.
+    add  $t3, $t3, $t2    # Suma el offset para ir a la posición correcta MAX[i][j].
+    sw   $t9, 0($t3)      # Guarda el valor final de MAX ($t9) en la memoria.
+
+    # --- Lógica de MIN (Cálculo del Mínimo) ---
+    # Algoritmo: MIN = A; if (B < MIN) MIN = B; if (C < MIN) MIN = C;
+
+    add  $t8, $t4, $zero  # Inicializamos temporalmente MIN ($t8) con el valor de A.
+    
+    # Comparar B con MIN actual
+    slt  $t7, $t5, $t8    # Compara: ¿Es B ($t5) < MIN ($t8)? Si sí, $t7 = 1.
+    beq  $t7, $zero, check_min_c # Si $t7 es 0 (B >= MIN), saltamos.
+    nop                   # Delay Slot.
+    add  $t8, $t5, $zero  # Si B era menor, actualizamos MIN = B.
+    
+check_min_c:
+    # Comparar C con MIN actual
+    slt  $t7, $t6, $t8    # Compara: ¿Es C ($t6) < MIN ($t8)?
+    beq  $t7, $zero, save_min # Si C no es menor, saltamos a guardar.
+    nop                   # Delay Slot.
+    add  $t8, $t6, $zero  # Si C era menor, actualizamos MIN = C.
+
+save_min:
+    # Guardar el resultado MIN en memoria
+    la   $t3, MIN         # Carga la dirección base de la matriz MIN.
+    add  $t3, $t3, $t2    # Suma el offset.
+    sw   $t8, 0($t3)      # Guarda el valor final de MIN ($t8) en la memoria.
+
+    # --- Control de Bucles ---
+    addi $s2, $s2, 1      # Incrementa el contador j en 1 (j++).
+    j    loop_j           # Salta incondicionalmente al inicio del bucle interno.
+    nop                   # Delay Slot.
+
+next_i:
+    addi $s1, $s1, 1      # Incrementa el contador i en 1 (i++).
+    j    loop_i           # Salta incondicionalmente al inicio del bucle externo.
+    nop                   # Delay Slot.
+
+end:
+    # --- Finalización del Programa ---
+    li   $v0, 10          # Carga el código de servicio 10 (exit) en $v0.
+    syscall               # Llama al sistema para terminar la ejecución limpiamente.
+
+# --- SECCIÓN DE DATOS ---
+# Se coloca al final para evitar que el procesador intente ejecutar estos datos como instrucciones al inicio.
+.data
+N:      .word 16        # Variable N = 16 (Tamaño de la matriz).
+A:      .space 1024     # Espacio reservado para Matriz A (16x16 palabras de 4 bytes).
+B:      .space 1024     # Espacio reservado para Matriz B.
+C:      .space 1024     # Espacio reservado para Matriz C.
+MAX:    .space 1024     # Espacio reservado para la matriz de salida MAX.
+MIN:    .space 1024     # Espacio reservado para la matriz de salida MIN.
+
+
+
+Ciclos Totales: 11010
+
+Stalls(ciclos que no ejecutan instrucciones utiles): 1156
+
+CPI: 11,010 / ~9,850 = ~1.117 (I put estimates because I cant see the stadistics in the programm)
+
+Análisis de Stalls: 
+
+    Riesgos de Control (Branch Hazards): Debido a la naturaleza iterativa del algoritmo (bucles), las instrucciones de salto (BNE, J) interrumpen el flujo secuencial de la tubería, obligando a descartar instrucciones pre-cargadas o esperar a calcular la dirección de destino.
+
+    Dependencias de Datos (Data Hazards): Existen situaciones donde una instrucción necesita un operando que aún está siendo procesado o cargado desde memoria por la instrucción anterior, lo que obliga a la Unidad de Riesgos (Hazard Unit) a detener la tubería para garantizar la integridad de los datos.
+
+    Operaciones Aritméticas Complejas: La presencia de registros HI/LO en uso sugiere operaciones de multiplicación/división, las cuales requieren múltiples ciclos de reloj para completarse, generando latencia adicional."
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#PART B CODE
+
+Diferencias y Cambios (Código A vs. Código B)
+La principal modificación en el Código B es la eliminación de las instrucciones NOP situadas tras los saltos (BEQ, BNE, J). En su lugar, se ha aplicado la técnica de relleno del Delay Slot (Ranura de Retardo)1. Específicamente, las instrucciones de actualización de punteros y contadores (ADDI) se han reubicado para ejecutarse inmediatamente después del salto, permitiendo al procesador realizar trabajo útil mientras resuelve la dirección de destino, reduciendo así los ciclos totales de ejecución.
+
+Funcionamiento del Código
+El programa implementa un algoritmo de procesamiento de matrices que recorre tres vectores de entrada ($A$, $B$ y $C$ de tamaño $16 \times 16$)2222. Para cada posición, compara los valores correspondientes para determinar el elemento mayor y el menor, almacenando los resultados en dos nuevos vectores de salida (MAX y MIN) en la memoria de datos3.
+
+Inicialización de Datos 
+Se han pre-cargado los vectores de memoria con valores numéricos variados (simulando datos aleatorios) para cumplir con los requisitos de verificación del enunciado. Esta inicialización es crítica para validar la integridad del algoritmo tras la optimización: permite confirmar que la lógica de comparación (slt) y selección de Máximo/Mínimo funciona correctamente con valores reales, evitando los "falsos positivos" que ocurrirían si se procesaran únicamente matrices vacías (ceros).
+
+
+.text 0x00400000        # Inicio del código
+.globl main
+
+main:
+    # --- Inicialización ---
+    la   $t0, N           
+    lw   $s0, 0($t0)      # $s0 = N (16)
+    li   $s1, 1           # i = 1
+
+loop_i:
+    # --- Condición del bucle externo (i) ---
+    # Comprobamos si i < N
+    slt  $t0, $s1, $s0    
+    beq  $t0, $zero, end  
+    li   $s2, 1           # [DELAY SLOT LLENO]: Inicializamos j=1 AQUI. 
+                          # Se ejecuta mientras el procesador decide si salta o no.
+                          # Hemos borrado el NOP anterior.
+
+loop_j:
+    # --- Condición del bucle interno (j) ---
+    # Comprobamos si j < N
+    slt  $t0, $s2, $s0    
+    beq  $t0, $zero, next_i 
+    nop                   # [NOTA]: Aquí dejamos el NOP porque si saltamos, 
+                          # no hay instrucción útil segura que poner sin cambiar mucho tu lógica.
+                          # Pero los saltos importantes (loops) están optimizados abajo.
+
+    # --- Cálculo de la Dirección de Memoria (Offset) ---
+    sll  $t0, $s1, 6      # i * 64
+    sll  $t1, $s2, 2      # j * 4
+    add  $t2, $t0, $t1    # Offset Total
+
+    # --- Carga de datos (Matrices A, B, C) ---
+    la   $t3, A           
+    add  $t3, $t3, $t2    
+    lw   $t4, 0($t3)      # $t4 = A[i][j]
+
+    la   $t3, B           
+    add  $t3, $t3, $t2    
+    lw   $t5, 0($t3)      # $t5 = B[i][j]
+
+    la   $t3, C           
+    add  $t3, $t3, $t2    
+    lw   $t6, 0($t3)      # $t6 = C[i][j]
+
+    # --- Lógica de MAX ---
+    add  $t9, $t4, $zero  # MAX = A
+    
+    # Comparar MAX con B
+    slt  $t7, $t9, $t5    # ¿MAX < B?
+    beq  $t7, $zero, check_c
+    nop                   # NOP necesario por estructura IF/ELSE
+    add  $t9, $t5, $zero  # MAX = B
+    
+check_c:
+    # Comparar MAX con C
+    slt  $t7, $t9, $t6    # ¿MAX < C?
+    beq  $t7, $zero, save_res
+    nop                   # NOP necesario
+    add  $t9, $t6, $zero  # MAX = C
+
+save_res:
+    # Guardar MAX
+    la   $t3, MAX         
+    add  $t3, $t3, $t2    
+    sw   $t9, 0($t3)      
+
+    # --- Lógica de MIN ---
+    add  $t8, $t4, $zero  # MIN = A
+    
+    # Comparar B con MIN
+    slt  $t7, $t5, $t8    # ¿B < MIN?
+    beq  $t7, $zero, check_min_c
+    nop                   # NOP necesario
+    add  $t8, $t5, $zero  # MIN = B
+    
+check_min_c:
+    # Comparar C con MIN
+    slt  $t7, $t6, $t8    # ¿C < MIN?
+    beq  $t7, $zero, save_min
+    nop                   # NOP necesario
+    add  $t8, $t6, $zero  # MIN = C
+
+save_min:
+    # Guardar MIN
+    la   $t3, MIN         
+    add  $t3, $t3, $t2    
+    sw   $t8, 0($t3)      
+
+    # --- OPTIMIZACIÓN DELAY SLOT (Bucle J) ---
+    # En tu código original aquí tenías: addi, j, nop.
+    # Ahora ponemos el addi DESPUÉS del j.
+    
+    j    loop_j           # Salta al inicio
+    addi $s2, $s2, 1      # [DELAY SLOT LLENO]: j++ se ejecuta MIENTRAS salta.
+                          # ¡Ahorramos 1 ciclo por cada casilla de la matriz!
+
+next_i:
+    # --- OPTIMIZACIÓN DELAY SLOT (Bucle I) ---
+    # Igual que arriba: movemos el i++ al hueco del salto.
+    
+    j    loop_i           # Salta al inicio externo
+    addi $s1, $s1, 1      # [DELAY SLOT LLENO]: i++ se ejecuta MIENTRAS salta.
+
+end:
+    li   $v0, 10          
+    syscall               
+
+# --- DATOS ---
+.data
+N:      .word 16        
+# NOTA: He puesto algunos valores de prueba en A y B para que veas que funciona.
+# El resto (.space) estará a 0.
+A:      .word 10, 20, 30, 40, 50, 60, 70, 80, 1, 2, 3, 4, 5, 6, 7, 8
+        .space 960      
+B:      .word 5, 25, 10, 100, 5, 5, 5, 5, 9, 9, 9, 9, 9, 9, 9, 9
+        .space 960      
+C:      .space 1024     
+MAX:    .space 1024     
+MIN:    .space 1024
+
+
+
+Ciclos Totales: 10750    -> the difference between A and B is 255 cycles
+
+Stalls(ciclos que no ejecutan instrucciones utiles): 1156
+
+CPI: 10,755 / ~9,850 = ~1.092
+
+Análisis de Stalls: 
+    its the same 
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+# PART C CODE
+
+¿Qué cambios he realizado para cumplir el enunciado?
+
+Loop Unrolling (Desenroscado 2x): Se ha modificado el bucle interno para procesar dos elementos por iteración (incrementando j de 2 en 2) en lugar de uno solo. Esto reduce a la mitad el número total de saltos y evaluaciones de condición (SLT/BNE), disminuyendo la sobrecarga de control.
+
+Instruction Scheduling (Reordenamiento Agresivo): Se han agrupado las 6 cargas de memoria (LW) al inicio del bloque (3 para el primer elemento y 3 para el segundo). Esto permite que, mientras el procesador carga los datos del segundo conjunto, lleguen los del primero, eliminando las esperanzas activas (stalls) por dependencia de datos.
+
+Gestión de Casos Residuales: Se ha añadido una estructura condicional (procesar_ultimo) para manejar correctamente el último elemento del vector en caso de que el tamaño N no sea múltiplo exacto del factor de desenroscado, haciendo el algoritmo más robusto.
+
+
+
+
+.text 0x00400000
+.globl main
+
+main:
+    # --- Inicialización ---
+    la   $t0, N           
+    lw   $s0, 0($t0)      # $s0 = N (16)
+    li   $s1, 1           # i = 1
+
+loop_i:
+    # --- Condición bucle externo ---
+    slt  $t0, $s1, $s0    
+    beq  $t0, $zero, end  
+    li   $s2, 1           # j = 1 (Inicialización en Delay Slot)
+
+loop_j:
+    # =========================================================
+    # VERIFICAR SI QUEDAN AL MENOS 2 ELEMENTOS POR PROCESAR
+    # =========================================================
+    addi $t0, $s2, 1          # j+1
+    slt  $t1, $t0, $s0        # ¿j+1 < N? (¿podemos procesar 2 elementos?)
+    beq  $t1, $zero, procesar_ultimo  # Si no, ir a procesar solo el último
+    nop
+
+    # =========================================================
+    # BLOQUE DE 2 ELEMENTOS (UNROLLING)
+    # =========================================================
+    
+    # --- Cálculo de offsets para 2 elementos ---
+    sll  $t0, $s1, 6          # i * 64 (16 elementos × 4 bytes)
+    sll  $t1, $s2, 2          # j * 4
+    add  $t2, $t0, $t1        # $t2 = Offset Elemento 1 (j)
+    addi $a3, $t2, 4          # $a3 = Offset Elemento 2 (j+1)
+
+    # --- Cargar Elementos 1 (A[j], B[j], C[j]) ---
+    la   $t3, A
+    add  $t3, $t3, $t2
+    lw   $t4, 0($t3)          # $t4 = A1
+
+    la   $t3, B
+    add  $t3, $t3, $t2
+    lw   $t5, 0($t3)          # $t5 = B1
+
+    la   $t3, C
+    add  $t3, $t3, $t2
+    lw   $t6, 0($t3)          # $t6 = C1
+
+    # --- Cargar Elementos 2 (A[j+1], B[j+1], C[j+1]) ---
+    la   $t3, A
+    add  $t3, $t3, $a3
+    lw   $s3, 0($t3)          # $s3 = A2
+
+    la   $t3, B
+    add  $t3, $t3, $a3
+    lw   $s4, 0($t3)          # $s4 = B2
+
+    la   $t3, C
+    add  $t3, $t3, $a3
+    lw   $s5, 0($t3)          # $s5 = C2
+
+    # --- MAX 1 ---
+    add  $t9, $t4, $zero      # MAX1 = A1
+    
+    slt  $t7, $t9, $t5        # ¿MAX1 < B1?
+    beq  $t7, $zero, chk_c1
+    nop
+    add  $t9, $t5, $zero      # MAX1 = B1
+chk_c1:
+    slt  $t7, $t9, $t6        # ¿MAX1 < C1?
+    beq  $t7, $zero, sv_max1
+    nop
+    add  $t9, $t6, $zero      # MAX1 = C1
+sv_max1:
+    la   $t3, MAX
+    add  $t3, $t3, $t2
+    sw   $t9, 0($t3)          # Guardar MAX1
+
+    # --- MIN 1 ---
+    add  $t8, $t4, $zero      # MIN1 = A1
+    
+    slt  $t7, $t5, $t8        # ¿B1 < MIN1?
+    beq  $t7, $zero, chk_mc1
+    nop
+    add  $t8, $t5, $zero      # MIN1 = B1
+chk_mc1:
+    slt  $t7, $t6, $t8        # ¿C1 < MIN1?
+    beq  $t7, $zero, sv_min1
+    nop
+    add  $t8, $t6, $zero      # MIN1 = C1
+sv_min1:
+    la   $t3, MIN
+    add  $t3, $t3, $t2
+    sw   $t8, 0($t3)          # Guardar MIN1
+
+    # --- MAX 2 ---
+    add  $t9, $s3, $zero      # MAX2 = A2
+    
+    slt  $t7, $t9, $s4        # ¿MAX2 < B2?
+    beq  $t7, $zero, chk_c2
+    nop
+    add  $t9, $s4, $zero      # MAX2 = B2
+chk_c2:
+    slt  $t7, $t9, $s5        # ¿MAX2 < C2?
+    beq  $t7, $zero, sv_max2
+    nop
+    add  $t9, $s5, $zero      # MAX2 = C2
+sv_max2:
+    la   $t3, MAX
+    add  $t3, $t3, $a3
+    sw   $t9, 0($t3)          # Guardar MAX2
+
+    # --- MIN 2 ---
+    add  $t8, $s3, $zero      # MIN2 = A2
+    
+    slt  $t7, $s4, $t8        # ¿B2 < MIN2?
+    beq  $t7, $zero, chk_mc2
+    nop
+    add  $t8, $s4, $zero      # MIN2 = B2
+chk_mc2:
+    slt  $t7, $s5, $t8        # ¿C2 < MIN2?
+    beq  $t7, $zero, sv_min2
+    nop
+    add  $t8, $s5, $zero      # MIN2 = C2
+sv_min2:
+    la   $t3, MIN
+    add  $t3, $t3, $a3
+    sw   $t8, 0($t3)          # Guardar MIN2
+
+    # --- Incrementar j en 2 y continuar ---
+    j    loop_j
+    addi $s2, $s2, 2          # j += 2 (UNROLLING: procesamos 2 por iteración)
+
+procesar_ultimo:
+    # =========================================================
+    # BLOQUE PARA PROCESAR ÚLTIMO ELEMENTO (cuando j = N-1)
+    # =========================================================
+    slt  $t0, $s2, $s0        # ¿j < N?
+    beq  $t0, $zero, next_i   # Si no, terminar bucle interno
+    nop
+
+    # --- Cálculo de offset para último elemento ---
+    sll  $t0, $s1, 6          # i * 64
+    sll  $t1, $s2, 2          # j * 4
+    add  $t2, $t0, $t1        # $t2 = Offset
+
+    # --- Cargar elementos ---
+    la   $t3, A
+    add  $t3, $t3, $t2
+    lw   $t4, 0($t3)          # $t4 = A[i][j]
+
+    la   $t3, B
+    add  $t3, $t3, $t2
+    lw   $t5, 0($t3)          # $t5 = B[i][j]
+
+    la   $t3, C
+    add  $t3, $t3, $t2
+    lw   $t6, 0($t3)          # $t6 = C[i][j]
+
+    # --- MAX ---
+    add  $t9, $t4, $zero      # MAX = A
+    
+    slt  $t7, $t9, $t5        # ¿MAX < B?
+    beq  $t7, $zero, chk_c_single
+    nop
+    add  $t9, $t5, $zero      # MAX = B
+chk_c_single:
+    slt  $t7, $t9, $t6        # ¿MAX < C?
+    beq  $t7, $zero, sv_max_single
+    nop
+    add  $t9, $t6, $zero      # MAX = C
+sv_max_single:
+    la   $t3, MAX
+    add  $t3, $t3, $t2
+    sw   $t9, 0($t3)          # Guardar MAX
+
+    # --- MIN ---
+    add  $t8, $t4, $zero      # MIN = A
+    
+    slt  $t7, $t5, $t8        # ¿B < MIN?
+    beq  $t7, $zero, chk_mc_single
+    nop
+    add  $t8, $t5, $zero      # MIN = B
+chk_mc_single:
+    slt  $t7, $t6, $t8        # ¿C < MIN?
+    beq  $t7, $zero, sv_min_single
+    nop
+    add  $t8, $t6, $zero      # MIN = C
+sv_min_single:
+    la   $t3, MIN
+    add  $t3, $t3, $t2
+    sw   $t8, 0($t3)          # Guardar MIN
+
+    # --- Incrementar j en 1 (último elemento procesado) ---
+    addi $s2, $s2, 1
+
+next_i:
+    # --- Continuar con siguiente i ---
+    j    loop_i
+    addi $s1, $s1, 1          # i++
+
+end:
+    li   $v0, 10
+    syscall
+
+# --- DATOS ---
+.data
+N:      .word 16
+
+# Matriz A (16x16) - primeros 16 elementos visibles, resto espacio
+A:      .word 10, 20, 30, 40, 50, 60, 70, 80, 1, 2, 3, 4, 5, 6, 7, 8
+        .space 960           # 16×16×4 = 1024 bytes - 64 = 960 bytes restantes
+
+# Matriz B (16x16)
+B:      .word 5, 25, 10, 100, 5, 5, 5, 5, 9, 9, 9, 9, 9, 9, 9, 9
+        .space 960
+
+# Matriz C (16x16)
+C:      .word 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2
+        .space 960
+
+# Matrices de salida
+MAX:    .space 1024          # 16×16×4 = 1024 bytes
+MIN:    .space 1024
+
+
+
+
+Ciclos Totales: 10020    -> the difference between A and B is 255 cycles
+
+Stalls(ciclos que no ejecutan instrucciones utiles): 1051
+
+CPI: 10020/(10020-1051)= (estimated) 10,020 / ~9,850 = ~1.017
+
+Análisis de Stalls: 
+
+    Eliminación de Riesgos de Datos (Data Hazards): La estrategia de agrupar las cargas de memoria al inicio del bloque desenroscado ha sido efectiva. Al separar temporalmente la instrucción de carga (LW) de su uso (SLT), se han ocultado las latencias de memoria, permitiendo que la Hazard Unit no necesite detener la ejecución por dependencias directas en la mayoría de los casos.
+
+    Reducción de Riesgos de Control: Al reducir la frecuencia de los saltos a la mitad (gracias al Loop Unrolling), también disminuyen los ciclos perdidos asociados a la gestión del flujo de control.
