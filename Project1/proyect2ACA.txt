@@ -1,0 +1,533 @@
+Parte 1: Usar el código original del Proyecto I (sin unrolling, sin optimizaciones), pero con la modificación del enunciado (usar MAX[i][j] = max(...) y MIN[i][j] = min(...)), y ejecutarlo con la configuración dada (pipeline, delay slot, caches configuradas de una manera específica).
+
+Calcular:
+
+Miss rate de cache de datos e instrucciones.
+
+Tiempo total de ejecución (incluyendo penalizaciones por misses y hazards).
+
+Matrices de 16×16 con datos aleatorios.
+
+Parte 2: Mantener el tamaño total de las caches igual, pero variar otros parámetros (asociatividad, tamaño de bloque, política de reemplazo, política de escritura) para minimizar el miss rate.
+
+Documentar resultados con gráficos si es posible.
+
+Parte 3: Usar el código optimizado (unrolling) del Proyecto I (parte 3) con la mejor configuración de cache de la Parte 2.
+
+Comparar resultados con la Parte 1.
+
+Proponer mejoras adicionales para reducir el miss rate de datos.
+
+# PART 1 CODE
+
+Para esta primera parte vamos a utilizar el codigo del primer proyecto de la parte 1 el que no tiene loop unrolling
+
+MACHINE CONFIG ----
+CORE 
+-pipelined yes
+-delay slot yes
+-hazard unit stall or forward when hazard is detected yes
+
+MEMORY
+-read 10
+-write 10
+
+PROGRAM CACHE
+-number of sets 16
+-block size 2
+-degree of associativity 1
+-replacement policy random
+
+DATA CACHE
+-number of sets 32
+-block size 2
+-degree of associativity 1
+-replacement policy random
+-writeback policy write through - write allocate
+
+
+
+CAMBIOS DEL CODIGO:
+    - Solo usamos matrices A y B, la C no 
+    - MAX se calcula sobre A[i-1][j], A[i][j], A[i+1][j]
+    - MIN se calcula sobre B[i-1][j], B[i][j], B[i+1][j]
+    - Los bucles van desde i = 1 hasta N-2 y j = 1 hasta N-2
+    - Eliminamos la matriz C del código y del espacio de datos
+
+.text 0x00400000
+.globl main
+
+main:
+    # --- Inicialización de N ---
+    la   $t0, N
+    lw   $s0, 0($t0)      # s0 = N (16)
+
+    # ============================================
+    # INICIALIZACIÓN DE DATOS (Rellenar A y B)
+    # ============================================
+    # Usaremos punteros para recorrer A y B y llenarlos
+    # con valores arbitrarios para simular "random"
+    
+    la   $t1, A           # Puntero a A
+    la   $t2, B           # Puntero a B
+    mul  $t3, $s0, $s0    # Total elementos = N * N = 256
+    li   $t4, 0           # Contador k = 0
+
+init_loop:
+    beq  $t4, $t3, start_proc # Si k == 256, terminar init
+    nop
+
+    # Generar un valor "pseudo-aleatorio" simple
+    # Por ejemplo: valor = k + 5 (para A) y valor = k * 2 (para B)
+    addi $t5, $t4, 5      # Valor para A
+    sw   $t5, 0($t1)      # Guardar en A[k]
+
+    sll  $t6, $t4, 1      # Valor para B (k*2)
+    sw   $t6, 0($t2)      # Guardar en B[k]
+
+    # Avanzar punteros y contador
+    addi $t1, $t1, 4      # A++
+    addi $t2, $t2, 4      # B++
+    addi $t4, $t4, 1      # k++
+    
+    j    init_loop
+    nop
+
+start_proc:
+    li   $s1, 1            # Inicializa i = 1
+
+loop_i:
+    # --- Condición del bucle externo (i) ---
+    # Comprobamos si i < N-1 (porque usamos i+1)
+    addi $t1, $s0, -1      # $t1 = N-1
+    slt  $t0, $s1, $t1     # Si i < N-1, entonces $t0 = 1
+    beq  $t0, $zero, end   # Si i >= N-1, termina el programa
+    nop                    # Delay Slot
+
+    li   $s2, 1            # Inicializa el contador del bucle interno 'j' en 1
+
+loop_j:
+    # --- Condición del bucle interno (j) ---
+    # Comprobamos si j < N-1 (porque usamos j+1 en los accesos)
+    slt  $t0, $s2, $t1     # Si j < N-1, entonces $t0 = 1
+    beq  $t0, $zero, next_i # Si j >= N-1, termina el bucle interno
+    nop                    # Delay Slot
+
+    # --- Cálculo del Offset Base [i][j] ---
+    # Fórmula: DirecciónBase + (i * 64) + (j * 4)
+    sll  $t2, $s1, 6       # $t2 = i * 64 (16 elementos x 4 bytes)
+    sll  $t3, $s2, 2       # $t3 = j * 4
+    add  $t4, $t2, $t3     # $t4 = Offset Total desde el inicio del array
+
+    # ============================================
+    # CÁLCULO DE MAX sobre A[i-1][j], A[i][j], A[i+1][j]
+    # ============================================
+
+    # --- Cargar A[i-1][j] ---
+    la   $t5, A            # Dirección base de A
+    add  $t6, $t5, $t4     # Apuntar a A[i][j]
+    lw   $a0, -64($t6)     # Carga A[i-1][j] (offset -64 bytes = -1 fila)
+
+    # --- Cargar A[i][j] ---
+    lw   $a1, 0($t6)       # Carga A[i][j]
+
+    # --- Cargar A[i+1][j] ---
+    lw   $a2, 64($t6)      # Carga A[i+1][j] (offset +64 bytes = +1 fila)
+
+    # --- Calcular MAX(a0, a1, a2) ---
+    add  $t7, $a0, $zero   # MAX = A[i-1][j] (CORREGIDO: move -> add)
+
+    # Comparar con A[i][j]
+    slt  $t8, $t7, $a1     # ¿MAX < A[i][j]?
+    beq  $t8, $zero, check_max2
+    nop                    # Delay Slot
+    add  $t7, $a1, $zero   # Si sí, MAX = A[i][j] (CORREGIDO: move -> add)
+
+check_max2:
+    # Comparar con A[i+1][j]
+    slt  $t8, $t7, $a2     # ¿MAX < A[i+1][j]?
+    beq  $t8, $zero, store_max
+    nop                    # Delay Slot
+    add  $t7, $a2, $zero   # Si sí, MAX = A[i+1][j] (CORREGIDO: move -> add)
+
+store_max:
+    # Guardar resultado en MAX[i][j]
+    la   $t8, MAX          # Dirección base de MAX
+    add  $t8, $t8, $t4     # Apuntar a MAX[i][j]
+    sw   $t7, 0($t8)       # Guardar valor
+
+    # ============================================
+    # CÁLCULO DE MIN sobre B[i-1][j], B[i][j], B[i+1][j]
+    # ============================================
+
+    # --- Cargar B[i-1][j] ---
+    la   $t5, B            # Dirección base de B
+    add  $t6, $t5, $t4     # Apuntar a B[i][j]
+    lw   $a0, -64($t6)     # Carga B[i-1][j]
+
+    # --- Cargar B[i][j] ---
+    lw   $a1, 0($t6)       # Carga B[i][j]
+
+    # --- Cargar B[i+1][j] ---
+    lw   $a2, 64($t6)      # Carga B[i+1][j]
+
+    # --- Calcular MIN(a0, a1, a2) ---
+    add  $t7, $a0, $zero   # MIN = B[i-1][j] (CORREGIDO: move -> add)
+
+    # Comparar con B[i][j]
+    slt  $t8, $a1, $t7     # ¿B[i][j] < MIN?
+    beq  $t8, $zero, check_min2
+    nop                    # Delay Slot
+    add  $t7, $a1, $zero   # Si sí, MIN = B[i][j] (CORREGIDO: move -> add)
+
+check_min2:
+    # Comparar con B[i+1][j]
+    slt  $t8, $a2, $t7     # ¿B[i+1][j] < MIN?
+    beq  $t8, $zero, store_min
+    nop                    # Delay Slot
+    add  $t7, $a2, $zero   # Si sí, MIN = B[i+1][j] (CORREGIDO: move -> add)
+
+store_min:
+    # Guardar resultado en MIN[i][j]
+    la   $t8, MIN          # Dirección base de MIN
+    add  $t8, $t8, $t4     # Apuntar a MIN[i][j]
+    sw   $t7, 0($t8)       # Guardar valor
+
+    # --- Control de Bucles ---
+    j    loop_j            # Continúa con siguiente j
+    addi $s2, $s2, 1       # j++ (Delay Slot)
+
+next_i:
+    j    loop_i            # Continúa con siguiente i
+    addi $s1, $s1, 1       # i++ (Delay Slot)
+
+end:
+    # --- Finalización del Programa ---
+    li   $v0, 10           # Código de servicio para exit
+    syscall                # Termina ejecución
+
+# --- SECCIÓN DE DATOS ---
+.data
+N:      .word 16        # Tamaño de la matriz (16x16)
+A:      .space 1024     # Espacio para Matriz A (16x16 palabras de 4 bytes = 1024 bytes)
+B:      .space 1024     # Espacio para Matriz B
+MAX:    .space 1024     # Espacio para matriz de salida MAX
+MIN:    .space 1024     # Espacio para matriz de salida MIN
+
+
+
+Total cycles: 12628
+Stalls: 1010
+
+
+PROGRAM CACHE
+Hits: 9356
+Misses: 3270
+Hit Rate: 74.101%
+Miss rate: 25.899%
+
+El rendimiento de la cache de instrucciones es razonable porque el codigo es un bucle pequeño que se repite. Una vez cargadas las instrucciones del bucle en la cache, se reutilizan muchas veces
+Los 3,270 misses ocurren principalmente al cargar el código de inicialización y las primeras iteraciones
+
+
+DATA CACHE
+Hits: 1
+Misses: 2080
+Hit Rate: 0.048%
+Miss rate: 99.952%
+
+La tasa de fallos es casi del 100% debido al tamaño diminuto de la caché (256 bytes) frente al tamaño de los datos trabajados. Se produce "thrashing" continuo.
+
+
+------------------------------------------------------------------------------------
+
+#PART 2
+
+para la parte 2 utilizamos el mismo codigo
+
+
+MACHINE CONFIG
+
+CORE
+-Pipelined: yes
+-Delay slot: yes
+-Hazard unit: stall or forward when hazard is detected
+
+MEMORY
+-Read: 10
+-Write: 10
+
+DATA CACHE (256 bytes):
+- Number of sets: 4
+- Block size: 4
+- Degree of associativity: 4
+- Replacement: LRU
+- Writeback: write back
+
+PROGRAM CACHE (128 bytes):
+- Number of sets: 4 
+- Block size: 4 
+- Degree of associativity: 2
+- Replacement: LRU
+
+RESULTS
+
+PROGRAM CACHE
+                PARTE 1       PARTE 2       MEJORA
+Hits:           9356          10223         +9.3%
+Misses:         3270          2403          -26.5%
+Hit Rate:       74.101%       80.968%       +6.867 puntos
+Miss Rate:      25.899%       19.032%       -6.867 puntos
+
+Comentario:
+Se ha logrado una mejora notable reduciendo los fallos en un 26.5%.
+El aumento del Block Size a 4 palabras ha permitido pre-cargar instrucciones secuenciales del bucle de forma más eficiente, mientras que la asociatividad (2-way) ha reducido los conflictos puntuales en un espacio tan reducido (128 bytes).
+
+
+DATA CACHE
+                PARTE 1       PARTE 2       MEJORA
+Hits:           1             383           +38200%
+Misses:         2080          1698          -18.4%
+Hit Rate:       0.048%        18.405%       +18.357 puntos
+Miss Rate:      99.952%       81.595%       -18.357 puntos
+
+Comentario:
+La mejora es drástica considerando la limitación estricta de 256 bytes. Pasar de casi 0% a un 18.4% de aciertos se debe a:
+1. Asociatividad (4-way): Factor crítico que permite a las matrices A, B y MAX convivir en la memoria sin borrarse mutuamente (eliminación de thrashing).
+2. Block Size (4 palabras): Aprovecha la localidad espacial al traer varios elementos adyacentes de la matriz en una sola lectura.
+
+
+------------------------------------------------------------------------------------
+
+# PART 3 CODE
+
+En esta parte introducimos en el codigo un loop unrolling
+
+PROGRAM CACHE
+-number of sets 16
+-block size 2
+-degree of associativity 1
+-replacement policy random
+
+DATA CACHE
+-number of sets 4
+-block size 4
+-degree of associativity 4
+-replacement policy lru
+-writeback policy write back
+
+
+
+
+.text 0x00400000
+.globl main
+
+main:
+    # --- Inicialización de N ---
+    la   $t0, N
+    lw   $s0, 0($t0)      # s0 = N (16)
+
+    # ============================================
+    # INICIALIZACIÓN DE DATOS (Rellenar A y B)
+    # ============================================
+    la   $t1, A           # Puntero a A
+    la   $t2, B           # Puntero a B
+    mul  $t3, $s0, $s0    # Total elementos = 256
+    li   $t4, 0           # Contador k = 0
+
+init_loop:
+    beq  $t4, $t3, start_proc 
+    nop
+
+    addi $t5, $t4, 5      # Valor A
+    sw   $t5, 0($t1)
+    sll  $t6, $t4, 1      # Valor B
+    sw   $t6, 0($t2)
+
+    addi $t1, $t1, 4      # A++
+    addi $t2, $t2, 4      # B++
+    addi $t4, $t4, 1      # k++
+    j    init_loop
+    nop
+
+start_proc:
+    # ============================================
+    # PROCESAMIENTO CON LOOP UNROLLING (Factor 2)
+    # ============================================
+    # Iteramos i de 1 a 14, j de 1 a 14
+    
+    li   $s1, 1            # i = 1
+
+loop_i:
+    addi $t1, $s0, -1      # t1 = N-1 (15)
+    slt  $t0, $s1, $t1     # i < 15?
+    beq  $t0, $zero, end
+    nop
+
+    li   $s2, 1            # j = 1
+
+loop_j:
+    # Condición: j < 15. 
+    # Al hacer unrolling de 2, procesaremos j y j+1.
+    slt  $t0, $s2, $t1     
+    beq  $t0, $zero, next_i
+    nop
+
+    # ------------------------------------------------
+    # CÁLCULO PARA COLUMNA [j]
+    # ------------------------------------------------
+    
+    # Calcular Offset para [i][j]
+    sll  $t2, $s1, 6       # i * 64
+    sll  $t3, $s2, 2       # j * 4
+    add  $t4, $t2, $t3     # Offset Total
+
+    # --- MAX [i][j] ---
+    la   $t5, A
+    add  $t6, $t5, $t4     # Ptr A[i][j]
+    lw   $a0, -64($t6)     # A[i-1][j]
+    lw   $a1, 0($t6)       # A[i][j]
+    lw   $a2, 64($t6)      # A[i+1][j]
+
+    # Calcular max(a0, a1, a2)
+    add  $t7, $a0, $zero   # max = a0
+    slt  $t8, $t7, $a1
+    beq  $t8, $zero, chk_mx2_1
+    nop
+    add  $t7, $a1, $zero
+chk_mx2_1:
+    slt  $t8, $t7, $a2
+    beq  $t8, $zero, str_mx_1
+    nop
+    add  $t7, $a2, $zero
+str_mx_1:
+    la   $t8, MAX
+    add  $t8, $t8, $t4
+    sw   $t7, 0($t8)
+
+    # --- MIN [i][j] ---
+    la   $t5, B
+    add  $t6, $t5, $t4     # Ptr B[i][j]
+    lw   $a0, -64($t6)     # B[i-1][j]
+    lw   $a1, 0($t6)       # B[i][j]
+    lw   $a2, 64($t6)      # B[i+1][j]
+
+    # Calcular min(a0, a1, a2)
+    add  $t7, $a0, $zero   # min = a0
+    slt  $t8, $a1, $t7
+    beq  $t8, $zero, chk_mn2_1
+    nop
+    add  $t7, $a1, $zero
+chk_mn2_1:
+    slt  $t8, $a2, $t7
+    beq  $t8, $zero, str_mn_1
+    nop
+    add  $t7, $a2, $zero
+str_mn_1:
+    la   $t8, MIN
+    add  $t8, $t8, $t4
+    sw   $t7, 0($t8)
+
+    # ------------------------------------------------
+    # CÁLCULO PARA COLUMNA [j+1] (UNROLLING)
+    # ------------------------------------------------
+    
+    # Offset para [i][j+1] es simplemente Offset anterior + 4 bytes
+    addi $t4, $t4, 4       # Offset [i][j+1]
+
+    # --- MAX [i][j+1] ---
+    la   $t5, A
+    add  $t6, $t5, $t4     # Ptr A[i][j+1]
+    lw   $a0, -64($t6)     # A[i-1][j+1]
+    lw   $a1, 0($t6)       # A[i][j+1]
+    lw   $a2, 64($t6)      # A[i+1][j+1]
+
+    add  $t7, $a0, $zero   # max
+    slt  $t8, $t7, $a1
+    beq  $t8, $zero, chk_mx2_2
+    nop
+    add  $t7, $a1, $zero
+chk_mx2_2:
+    slt  $t8, $t7, $a2
+    beq  $t8, $zero, str_mx_2
+    nop
+    add  $t7, $a2, $zero
+str_mx_2:
+    la   $t8, MAX
+    add  $t8, $t8, $t4
+    sw   $t7, 0($t8)
+
+    # --- MIN [i][j+1] ---
+    la   $t5, B
+    add  $t6, $t5, $t4     # Ptr B[i][j+1]
+    lw   $a0, -64($t6)     # B[i-1][j+1]
+    lw   $a1, 0($t6)       # B[i][j+1]
+    lw   $a2, 64($t6)      # B[i+1][j+1]
+
+    add  $t7, $a0, $zero   # min
+    slt  $t8, $a1, $t7
+    beq  $t8, $zero, chk_mn2_2
+    nop
+    add  $t7, $a1, $zero
+chk_mn2_2:
+    slt  $t8, $a2, $t7
+    beq  $t8, $zero, str_mn_2
+    nop
+    add  $t7, $a2, $zero
+str_mn_2:
+    la   $t8, MIN
+    add  $t8, $t8, $t4
+    sw   $t7, 0($t8)
+
+    # --- Control de Bucles ---
+    # Incrementamos j en 2 porque hemos hecho j y j+1
+    addi $s2, $s2, 2       
+    j    loop_j
+    nop
+
+next_i:
+    addi $s1, $s1, 1       # i++
+    j    loop_i
+    nop
+
+end:
+    li   $v0, 10
+    syscall
+
+.data
+N:      .word 16
+A:      .space 1024
+B:      .space 1024
+MAX:    .space 1024
+MIN:    .space 1024
+
+
+
+
+DATA CACHE
+            PARTE 1     PARTE 3     MEJORA
+Hits        1           383         +38200%
+Misses      2080        1698        -18.4%
+Hit Rate    0.048%      18.405%     +18.357 puntos
+Miss Rate   99.952%     81.595%     -18.357 puntos
+
+
+PROGRAM CACHE
+            PARTE 1     PARTE 3     MEJORA
+Hits        9356        7568        -19.1%
+Misses      3270        4386        +34.1%
+Hit Rate    74.101%     63.309%     -10.792 puntos
+Miss Rate   25.899%     36.691%     +10.792 puntos
+
+
+Para la pregunta extra: 
+Solución: Agregar un espacio vacío (Padding) entre la declaración de las matrices en la sección .data para desalinearlas. Por ejemplo, declarar una variable dummy: .space 16 entre A y B. Esto haría que B empiece en un conjunto diferente al de A, reduciendo drásticamente las colisiones y bajando el Miss Rate.
+
+
+
+COSAS QUE FALTAN
+
+- CODIGOS CON COMENTARIOS Y ENTENDERLOS
+- PASAR TODO A INGLES
+- REVISAR LA INFO DE LO QUE SE PIDE 
+
