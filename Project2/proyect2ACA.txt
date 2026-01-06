@@ -1,22 +1,20 @@
-Parte 1: Usar el código original del Proyecto I (sin unrolling, sin optimizaciones), pero con la modificación del enunciado (usar MAX[i][j] = max(...) y MIN[i][j] = min(...)), y ejecutarlo con la configuración dada (pipeline, delay slot, caches configuradas de una manera específica).
+¿Cuál es el objetivo? El objetivo principal es analizar cómo la jerarquía de memoria (específicamente las cachés L1 de datos e instrucciones) afecta al rendimiento del procesador. Usamos un simulador (QtMips) para medir el tiempo de ejecución y la tasa de fallos (miss rate).
 
-Calcular:
+¿Qué hace el código? El código implementa una operación tipo "stencil" (común en procesamiento de imágenes) sobre dos matrices de 16×16, A y B:
 
-Miss rate de cache de datos e instrucciones.
+Inicialización: Primero rellena las matrices A y B con valores generados aritméticamente.
 
-Tiempo total de ejecución (incluyendo penalizaciones por misses y hazards).
+Procesamiento: Recorre los elementos internos de las matrices (ignorando los bordes). Para cada posición (i,j):
 
-Matrices de 16×16 con datos aleatorios.
+Calcula el valor Máximo entre los vecinos verticales de la matriz A (A[i−1], A[i], A[i+1]) y lo guarda en la matriz MAX.
 
-Parte 2: Mantener el tamaño total de las caches igual, pero variar otros parámetros (asociatividad, tamaño de bloque, política de reemplazo, política de escritura) para minimizar el miss rate.
+Calcula el valor Mínimo entre los vecinos verticales de la matriz B (B[i−1], B[i], B[i+1]) y lo guarda en la matriz MIN.
 
-Documentar resultados con gráficos si es posible.
+¿Qué observamos en la Parte 1? En esta parte configuramos una Caché de Datos muy pequeña (256 bytes) y de Mapeo Directo.
 
-Parte 3: Usar el código optimizado (unrolling) del Proyecto I (parte 3) con la mejor configuración de cache de la Parte 2.
+El problema es que la distancia en memoria entre la matriz A, la B y las de resultados es de 1024 bytes. Como 1024 es múltiplo exacto del tamaño de la caché (256), las posiciones correspondientes de A, B, MAX y MIN compiten siempre por el mismo bloque de caché.
 
-Comparar resultados con la Parte 1.
-
-Proponer mejoras adicionales para reducir el miss rate de datos.
+Esto provoca un fenómeno llamado Cache Thrashing (conflicto continuo), lo que resulta en una tasa de fallos de datos (Data Miss Rate) de casi el 100%, haciendo la ejecución extremadamente lenta.
 
 # PART 1 CODE
 

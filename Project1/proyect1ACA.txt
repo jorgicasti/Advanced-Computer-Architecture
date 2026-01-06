@@ -1,13 +1,16 @@
 #PART A CODE
 
 
+He adaptado la implementación a palabras de 32 bits para garantizar la compatibilidad nativa y la ejecución correcta en el simulador QtMips, ya que su arquitectura base es de 32 bits.
 
--Objetivo: Procesar tres matrices de entrada ($A, B, C$) de tamaño $16\times16$ para generar dos matrices de resultado: $MAX$ (con los valores mayores) y $MIN$ (con los menores).
--Algoritmo: Utiliza dos bucles anidados (i y j) que recorren la matriz desde la posición 1 hasta $N$, comparando los tres valores en cada celda mediante instrucciones slt (set less than).
--Memoria: Accede a los datos calculando manualmente el desplazamiento (offset) en bytes: Base + (i * 64) + (j * 4).
--Pipeline: Cumple los requisitos de la "Parte A" insertando una instrucción vacía (nop) después de cada salto para respetar el Delay Slot sin optimizar todavía.
--Estructura: La sección de datos (.data) se sitúa al final para asegurar que la ejecución comience inmediatamente en el código principal.
 
+EXPLICACION DEL EJERCICIO
+
+El Objetivo: El programa toma tres matrices (A, B y C). Va casilla por casilla, compara los tres números y guarda el más grande en la matriz MAX y el más pequeño en la matriz MIN.
+
+La Regla de la "Parte A": Es la versión básica. El enunciado nos obliga a poner una "instrucción vacía" (llamada nop) después de cada salto o decisión. Esto hace que el procesador espere un momento para no cometer errores, aunque sea un poco más lento.
+
+Cómo accede a los datos: Para saber qué número leer, el código calcula la posición en memoria basándose en la fila y la columna actual. Usamos datos de 32 bits para que funcione bien en este simulador.
 
 
 
@@ -143,8 +146,6 @@ Análisis de Stalls:
     Riesgos de Control (Branch Hazards): Debido a la naturaleza iterativa del algoritmo (bucles), las instrucciones de salto (BNE, J) interrumpen el flujo secuencial de la tubería, obligando a descartar instrucciones pre-cargadas o esperar a calcular la dirección de destino.
 
     Dependencias de Datos (Data Hazards): Existen situaciones donde una instrucción necesita un operando que aún está siendo procesado o cargado desde memoria por la instrucción anterior, lo que obliga a la Unidad de Riesgos (Hazard Unit) a detener la tubería para garantizar la integridad de los datos.
-
-    Operaciones Aritméticas Complejas: La presencia de registros HI/LO en uso sugiere operaciones de multiplicación/división, las cuales requieren múltiples ciclos de reloj para completarse, generando latencia adicional."
 
 
 ------------------------------------------------------------------------------------------------------------------------------------------------------------
